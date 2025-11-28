@@ -17,6 +17,10 @@ import (
 	"golang.org/x/sys/windows/registry"
 
 	"embed"
+	"syscall"
+	"unsafe"
+
+	"github.com/natefinch/npipe"
 )
 
 // ================= EMBED =================
@@ -262,9 +266,48 @@ func cancelShutdown(cfg Config) {
 func setOK()  { systray.SetIcon(iconOK) }
 func setERR() { systray.SetIcon(iconError) }
 
+var pipe net.Listener
+
+func ensureSingleInstance() {
+
+	var err error
+
+	pipe, err = npipe.Listen(`\\.\pipe\UPSMonitorSingleton`)
+
+	if err != nil {
+		showMessageBox("UPS Monitor", "UPS Monitor läuft bereits.")
+		os.Exit(0)
+	}
+
+	// Pipe offen halten, sonst wird sie freigegeben
+	go func() {
+		for {
+			conn, err := pipe.Accept()
+			if err != nil {
+				return
+			}
+			conn.Close()
+		}
+	}()
+}
+
+func showMessageBox(title, text string) {
+	user32 := syscall.NewLazyDLL("user32.dll")
+	proc := user32.NewProc("MessageBoxW")
+
+	t, _ := syscall.UTF16PtrFromString(title)
+	m, _ := syscall.UTF16PtrFromString(text)
+
+	proc.Call(0,
+		uintptr(unsafe.Pointer(m)),
+		uintptr(unsafe.Pointer(t)),
+		0)
+}
+
 // ================= MAIN =================
 
 func main() {
+	ensureSingleInstance()
 	systray.Run(onReady, onExit)
 }
 
@@ -360,5 +403,8 @@ func onReady() {
 		}
 	}()
 }
-
-func onExit() {}
+func onExit() {
+	if pipe != nil {
+		pipe.Close()
+	}
+}
